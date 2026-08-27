@@ -340,6 +340,51 @@
     return { kind: "card", label: collectOwnTextParts(headerEl).join(" "), isLogs: false, subitems: [], bodyText: null };
   }
 
+  // Reported live: the "Variables" debug option showed only its card
+  // label ("Conversation Variables") in the PiP, never the actual
+  // variables. Root cause: `buildSimpleCardEntry` above is the fallback
+  // for *any* accordion__item-header that isn't specifically Logs — it
+  // only ever reads the header's own label and never looks at its body
+  // at all, logs being the one deliberate exception. That's fine for
+  // start_function/Request-style cards (their body is raw tool-call
+  // JSON, out of scope — see collectTurnDebugEntries's doc comment), but
+  // wrong for Variables, whose body is confirmed live to hold one
+  // `[data-test-id="conversation-variable-<NAME>"]` element per
+  // variable — real, individually addressable data, not opaque JSON.
+  // This builds one "variables" entry from all of them at once, keyed
+  // off that stable per-variable test-id rather than the card's own
+  // label text (which isn't confirmed stable/consistent — the wrapping
+  // accordion for Variables couldn't be reliably reproduced live to
+  // confirm its exact label in every case, but the per-variable test-id
+  // pattern was).
+  // Confirmed live: a `conversation-variable-<NAME>` element's own text
+  // is the name *and* value both — "IDNV_passed", ":", "False" as three
+  // separate sibling text fragments, not just the value alone. Strip the
+  // leading name (and the bare ":" that follows it) rather than assuming
+  // a fixed fragment count, since some values themselves render across
+  // multiple fragments (e.g. a JSON array/object).
+  function readConversationVariable(el) {
+    const name = (el.getAttribute("data-test-id") || "").replace(/^conversation-variable-/, "");
+    const parts = collectOwnTextParts(el);
+    if (parts[0] === name) parts.shift();
+    if (parts[0] === ":") parts.shift();
+    return { name, value: parts.join(" ") };
+  }
+
+  // `turnIdx`/`path` are optional — present when this card is known to
+  // sit behind a real accordion (so the PiP can offer a toggle), absent
+  // for the standalone-inline case (nothing to toggle there at all).
+  // Reported live: omitting them here for the *already-expanded* case
+  // (only the not-yet-expanded placeholder carried them, in an earlier
+  // version) meant the header rendered as a plain non-clickable `<div>`
+  // the moment real variables showed up — collapsing it from the PiP
+  // silently did nothing, because there was no button there to click at
+  // all once expanded. Both states need to carry the same identity so
+  // the toggle keeps working in both directions, not just expand.
+  function buildVariablesCardEntry(label, variableEls, turnIdx, path) {
+    return { kind: "variables", label, variables: variableEls.map(readConversationVariable), turnIdx, path };
+  }
+
   // Logs gets recursive treatment the other card types don't: confirmed
   // live that each individual log-entry header (e.g. "LANGUAGE") is
   // *itself* another one of Studio's expandable rows, not a dead label —
@@ -396,21 +441,35 @@
     return { kind: "card", label, isLogs: true, subitems, bodyText, turnIdx, path };
   }
 
-  // Re-locates a specific Logs (sub)entry's header fresh, by walking down
-  // from the turn's top-level Logs card through `path` matching each
-  // nested header's *current* label text — never a captured reference —
-  // so a click always operates on whatever's actually live right now. See
-  // buildLogsCardEntry above for why this exists. `path[0]` is always
-  // "Logs" itself; loop starts at index 1 to skip re-matching the root.
-  // Known limitation, accepted: if two sibling log entries under the same
+  // Re-locates a specific (sub)entry's header fresh, by walking down from
+  // the turn's top-level card through `path` matching each nested
+  // header's *current* label text — never a captured reference — so a
+  // click always operates on whatever's actually live right now. See
+  // buildLogsCardEntry above for why this exists. `path[0]` identifies
+  // the root card itself; loop starts at index 1 to skip re-matching it.
+  // Known limitation, accepted: if two sibling entries under the same
   // parent ever share the exact same label text, this matches whichever
   // comes first — no stronger identity than label text is available.
+  //
+  // Originally Logs-only (found the root via `logs-card-header`
+  // specifically, a stronger signal than label text alone). Generalized
+  // to match the root by label like every subsequent level already did —
+  // needed once Variables turned out to live inside `start_function`'s
+  // own accordion (see buildVariablesCardEntry), a card with no special
+  // marker of its own to key off. The old Logs-specific lookup is kept
+  // as a first attempt, since it's strictly more precise when it
+  // applies, falling back to generic label matching otherwise.
   function findAccordionHeaderByPath(panel, turnIdx, path) {
     const scope = panel || document;
     const turnEl = scope.querySelector(`[data-turn-idx="${turnIdx}"]`);
     if (!turnEl) return null;
 
-    let header = turnEl.querySelector('[data-test-id="logs-card-header"]')?.closest('[data-test-id="accordion__item-header"]');
+    const rootHeaders = [...turnEl.querySelectorAll('[data-test-id="accordion__item-header"]')];
+    let header =
+      (path[0] === "Logs" && turnEl.querySelector('[data-test-id="logs-card-header"]')?.closest('[data-test-id="accordion__item-header"]')) ||
+      rootHeaders.find((h) => collectOwnTextParts(h).join(" ") === path[0]);
+    if (!header) return null;
+
     for (let i = 1; i < path.length && header; i++) {
       const body = header.parentElement && header.parentElement.children[1];
       if (!body) return null; // not expanded on the source page (yet) — nothing live to click into
@@ -554,15 +613,73 @@
       }
       if (testId === "accordion__item-header") {
         const isLogs = Boolean(node.querySelector('[data-test-id="logs-card-header"]'));
-        const entry = isLogs
-          ? buildLogsCardEntry(node, turnEl.getAttribute("data-turn-idx"), [])
-          : buildSimpleCardEntry(node);
         // The card's body (nested content, when expanded) is a sibling
         // of the header under the same parent — confirmed live. Consumed
-        // above (recursively, for Logs) via the same node reference.
+        // below (recursively, for Logs; directly, for Variables) via the
+        // same node reference either way.
         const body = node.parentElement && node.parentElement.children[1];
+
+        if (isLogs) {
+          const entry = buildLogsCardEntry(node, turnEl.getAttribute("data-turn-idx"), []);
+          if (body) handledBodies.add(body);
+          if (entry.label) entries.push(entry);
+          return;
+        }
+
+        // Confirmed live: a card's body can hold Conversation Variables
+        // *alongside* whatever the card itself already represents (e.g.
+        // expanding "start_function" reveals the full variable dump as
+        // well as being, itself, still the start_function step) — so
+        // this adds a variables entry rather than replacing the card's
+        // own one. Pushed *before* the simple card entry, not after, so
+        // the card stays the immediately-preceding entry when its
+        // duration text arrives next in the walk — see
+        // postProcessDebugEntries's card-duration merge, which keys off
+        // exactly that adjacency.
+        const variableEls = body ? [...body.querySelectorAll('[data-test-id^="conversation-variable-"]')] : [];
+        if (variableEls.length > 0) {
+          entries.push(
+            buildVariablesCardEntry("Conversation Variables", variableEls, turnEl.getAttribute("data-turn-idx"), [
+              collectOwnTextParts(node).join(" "),
+            ])
+          );
+        } else if (node.querySelector('[data-test-id="function-call-start_function"]')) {
+          // Reported live: variables didn't show at all, because on this
+          // call start_function's own accordion isn't expanded by
+          // default — its body (and the variables inside it) doesn't
+          // exist in the DOM at all until a real click expands it, same
+          // as Logs. Unlike the `variableEls.length > 0` case above,
+          // there's nothing to read yet — offer a click-to-expand
+          // affordance instead (turnIdx + path, remote-controlled via
+          // toggleAccordionHeaderByPath, same mechanism as Logs) rather
+          // than silently showing nothing with no way to get the data.
+          entries.push({
+            kind: "variables",
+            label: "Conversation Variables",
+            variables: [],
+            turnIdx: turnEl.getAttribute("data-turn-idx"),
+            path: [collectOwnTextParts(node).join(" ")],
+          });
+        }
+
+        const simpleEntry = buildSimpleCardEntry(node);
         if (body) handledBodies.add(body);
-        if (entry.label) entries.push(entry);
+        if (simpleEntry.label) entries.push(simpleEntry);
+        return;
+      }
+      // Standalone case: confirmed live that "Variables" doesn't always
+      // sit behind an accordion__item-header at all — sometimes each
+      // conversation-variable-* div is just inline in the turn, no
+      // wrapping card in sight. Caught here as one entry per variable;
+      // postProcessDebugEntries merges consecutive ones back into a
+      // single card, the same shape the accordion path already produces,
+      // so the renderer doesn't need to know which case it was.
+      if ((testId || "").startsWith("conversation-variable-")) {
+        entries.push({
+          kind: "variables",
+          label: null,
+          variables: [readConversationVariable(node)],
+        });
         return;
       }
       if (isChipGroupContainer(node)) {
@@ -596,6 +713,13 @@
   //     into one, joining a bare unit suffix ("s"/"ms"/"m"/"h") directly
   //     onto the previous fragment with no space so "0.121" + "s" reads
   //     as "0.121s", not "0.121 s".
+  //   - Standalone `conversation-variable-*` divs (see
+  //     collectTurnDebugEntries — the case where Variables isn't behind
+  //     an accordion at all) each arrive as their own single-variable
+  //     "variables" entry. Merge consecutive ones into one combined
+  //     card, same shape as when an accordion wrapper already grouped
+  //     them, so the renderer only has to handle one "variables" shape
+  //     either way.
   function postProcessDebugEntries(entries) {
     const unitRe = /^(ms|s|m|h)$/;
     const durationRe = /^\d+(\.\d+)?(ms|s)$/;
@@ -610,7 +734,11 @@
         prev.label = `${prev.label} · ${entry.text}`;
         continue;
       }
-      merged.push({ ...entry });
+      if (entry.kind === "variables" && !entry.label && prev?.kind === "variables") {
+        prev.variables.push(...entry.variables);
+        continue;
+      }
+      merged.push(entry.kind === "variables" ? { ...entry, variables: [...entry.variables] } : { ...entry });
     }
     return merged;
   }
@@ -1116,6 +1244,10 @@
         strip.appendChild(buildLogsCard(doc, entry));
         return;
       }
+      if (entry.kind === "variables") {
+        strip.appendChild(buildVariablesCard(doc, entry));
+        return;
+      }
 
       const chip = doc.createElement("span");
       chip.className = entry.kind === "flow" ? "pp-debug-chip pp-debug-chip-flow" : "pp-debug-chip";
@@ -1186,6 +1318,72 @@
       pre.className = "pp-debug-logs-body";
       pre.textContent = entry.bodyText;
       card.appendChild(pre);
+    }
+
+    return card;
+  }
+
+  // Mirrors the "Variables" debug option — see buildVariablesCardEntry
+  // for why this exists as its own kind rather than falling through to a
+  // flat label-only chip like most other cards.
+  //
+  // Two shapes, depending on whether `turnIdx`/`path` are set:
+  //   - Not set: the standalone-inline case, or a card whose body was
+  //     already expanded when scraped. Nothing to click — the data is
+  //     just rendered, confirmed live that individual
+  //     `conversation-variable-*` divs are real, readable data the
+  //     moment they're in the DOM, with no separate toggle of their own.
+  //   - Set: reported live that on some calls, start_function's own
+  //     accordion (where the variables live) isn't expanded by default,
+  //     same as Logs — so this needs the same click-to-expand affordance
+  //     Logs already has, not just a silent "nothing to show." The
+  //     header becomes a button wired to toggleAccordionHeaderByPath
+  //     (re-checks the live source page and expands or collapses
+  //     accordingly, same remote-control approach as Logs — see that
+  //     function's own comments for why both scrolling and a real settle
+  //     delay before retrying were necessary), and the next
+  //     maybeRefreshPipForContentChange poll tick picks up the resulting
+  //     variables once the source page actually expands.
+  function buildVariablesCard(doc, entry) {
+    const card = doc.createElement("div");
+    card.className = "pp-debug-variables";
+
+    const hasContent = entry.variables.length > 0;
+    const canToggle = Boolean(entry.turnIdx && entry.path);
+
+    const header = doc.createElement(canToggle ? "button" : "div");
+    header.className = "pp-debug-variables-header";
+    if (canToggle) {
+      header.type = "button";
+      header.classList.add("pp-debug-variables-header-button");
+      header.textContent = `${hasContent ? "▾" : "▸"} ${entry.label || "Conversation Variables"}`;
+      header.title = "Toggle on the source page";
+      header.onclick = () => toggleAccordionHeaderByPath(pipSourcePanel, entry.turnIdx, entry.path);
+    } else {
+      header.textContent = entry.label || "Conversation Variables";
+    }
+    card.appendChild(header);
+
+    if (hasContent) {
+      const list = doc.createElement("div");
+      list.className = "pp-debug-variables-list";
+      entry.variables.forEach(({ name, value }) => {
+        const row = doc.createElement("div");
+        row.className = "pp-debug-variables-row";
+
+        const nameEl = doc.createElement("span");
+        nameEl.className = "pp-debug-variables-name";
+        nameEl.textContent = name;
+
+        const valueEl = doc.createElement("span");
+        valueEl.className = "pp-debug-variables-value";
+        valueEl.textContent = value;
+
+        row.appendChild(nameEl);
+        row.appendChild(valueEl);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
     }
 
     return card;
@@ -1589,6 +1787,8 @@
         return `chip:${entry.label}:${entry.values.join(",")}`;
       case "flow":
         return `flow:${entry.text}`;
+      case "variables":
+        return `vars:${entry.label || ""}:${entry.variables.map((v) => `${v.name}=${v.value}`).join(",")}`;
       default:
         return `text:${entry.text}`;
     }
