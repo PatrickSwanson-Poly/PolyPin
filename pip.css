@@ -1,0 +1,499 @@
+/* PolyPin — stylesheet for the floating documentPictureInPicture window
+   itself. Fetched by content.js and injected as a <style> tag into the
+   PiP document (extension stylesheets aren't auto-applied to a fresh
+   docPiP document, so this has to be pulled in explicitly).
+
+   Themed to match Studio's own light/dark palette (confirmed live
+   against the real app in both modes — see DESIGN_SPEC.md), not just
+   PolyTrace_v2's brand colors as a fixed dark-only scheme. content.js
+   detects Studio's *current* theme (`document.documentElement.classList
+   .contains("dark")` on the source page) and stamps it onto the PiP root
+   as `data-pp-theme`, kept live in sync with the source page — see
+   applyPipTheme in content.js. `--pp-accent` (#d9ee50) is Studio's own
+   brand green and is deliberately identical in both themes (confirmed
+   live: Studio itself doesn't retheme it either). Every other color
+   below is a CSS variable for exactly this reason — swapping themes
+   means swapping the variable block, not hunting down individual rules. */
+
+:root {
+  /* Dark (default) — confirmed live against Studio's own dark mode. */
+  --pp-bg: #050509;
+  --pp-surface: #18181b;
+  --pp-border: #27272a;
+  --pp-text: #ededed;
+  --pp-accent: #d9ee50;
+  --pp-accent-ink: #161617; /* text/icon color drawn ON TOP of a solid --pp-accent fill — accent is a bright color in both themes, so this stays a fixed dark ink rather than varying */
+  --pp-agent-accent: #6bb6ff; /* PolyPin's own Agent/Caller differentiation accent, not Studio's — see .pp-turn-agent below. Deliberately constant across themes too. */
+  /* --pp-accent/--pp-agent-accent are both light/bright colors — reads
+     fine as *text* against dark mode's near-black background, which is
+     all dark mode ever needs. Text-safe variants below exist for the
+     opposite case. */
+  --pp-accent-text: var(--pp-accent);
+  --pp-agent-accent-text: var(--pp-agent-accent);
+}
+
+:root[data-pp-theme="light"] {
+  --pp-bg: #f5f5f5;
+  --pp-surface: #fcfcfc;
+  --pp-border: #e9e9e9;
+  --pp-text: #161617;
+  /* Confirmed live: reusing the bright dark-mode accents directly as
+     *text* on light mode's near-white background was hard to read —
+     a light/bright color doesn't gain contrast just because the accent
+     is "the brand color"; contrast is about lightness, and light-on-
+     light fails the same way regardless of hue. Darker, same-hue
+     shades (Tailwind's lime-700 / sky-700, chosen for their tested AA
+     contrast on white) step in specifically where the accent is
+     rendered as glyphs, not as a fill/border/bar — see the usages of
+     each variable in this file for which is which. */
+  --pp-accent-text: #4d7c0f;
+  --pp-agent-accent-text: #0369a1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Several elements below (.pp-audio-bar, .pp-audio-row, .pp-waveforms,
+   .pp-audio-loading, ...) have their own `display: flex` rule, which has
+   the same specificity as the browser's built-in `[hidden] { display:
+   none }` rule — and since this stylesheet loads after the browser's
+   default one, ours won the tie on source order, silently defeating
+   every `element.hidden = true` in content.js for those elements even
+   though the attribute itself was being set correctly. Confirmed live:
+   this is why the loading spinner and the real audio controls could show
+   at the same time. This single override fixes it everywhere, current and
+   future, rather than patching each class's `[hidden]` case individually. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--pp-bg);
+  color: var(--pp-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.pp-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.pp-header {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--pp-text) 10%, transparent);
+}
+
+.pp-header-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pp-header-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pp-text) 60%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pp-transcript {
+  flex: 1;
+  overflow-y: auto;
+  /* Explicit, not just "no rule needed": per spec, an element with
+     overflow-y set to anything other than `visible` computes an
+     unspecified overflow-x as `auto` too — confirmed live, this is
+     exactly what was producing an unwanted horizontal scrollbar whenever
+     a long debug chip/line overflowed instead of wrapping. Wrapping
+     fixes those chips (see .pp-debug-chip etc. below); this is the
+     backstop so nothing here can ever need a sideways scroll again. */
+  overflow-x: hidden;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  /* Space *between* turns — bumped up from the original 10px on
+     request. Now that each turn's debug entries live inside its own
+     .pp-turn-group (see below) rather than as a separate sibling at this
+     same level, this gap only ever separates one whole turn from the
+     next, never a turn from its own debug info — so it can be this much
+     larger without also pushing debug content away from its message. */
+  gap: 18px;
+}
+
+/* Couples a turn's debug entries tightly to the bubble they preceded —
+   see the comment in renderPipContent (content.js) for why this exists:
+   reported live that with debug strip and bubble as plain uniform-gap
+   siblings, a turn's own debug info looked exactly as disconnected from
+   it as from the *next* turn's content entirely. */
+.pp-turn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pp-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+/* Persistent per-speaker identity, not just the "currently playing"
+   highlight further below (.pp-turn-active, which — deliberately —
+   still reuses --pp-accent rather than introducing a third color, since
+   it's already visually distinguished by being additionally
+   brighter/bordered on top of whichever speaker color already applies).
+   Reported live: the old plain 0.04-vs-0.06-alpha background difference
+   alone was too subtle to scan at a glance in a small floating window.
+   Agent gets a cool blue (--pp-agent-accent, PolyPin's own — not one of
+   Studio's colors) so it reads as clearly distinct from Caller's green
+   at a glance, not just on close reading of the small speaker label —
+   the label alone was the only differentiator before this. */
+.pp-turn-agent {
+  background: color-mix(in srgb, var(--pp-agent-accent) 7%, transparent);
+  border-left-color: color-mix(in srgb, var(--pp-agent-accent) 55%, transparent);
+}
+
+.pp-turn-caller {
+  background: color-mix(in srgb, var(--pp-accent) 8%, transparent);
+  border-left-color: color-mix(in srgb, var(--pp-accent) 55%, transparent);
+}
+
+.pp-turn-speaker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--pp-text) 50%, transparent);
+}
+
+.pp-turn-agent .pp-turn-speaker {
+  color: var(--pp-agent-accent-text);
+}
+
+.pp-turn-caller .pp-turn-speaker {
+  color: var(--pp-accent-text);
+}
+
+.pp-turn-text {
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pp-turn-original {
+  margin-top: 2px;
+  font-size: 11px;
+  font-style: italic;
+  color: color-mix(in srgb, var(--pp-text) 45%, transparent);
+  word-break: break-word;
+}
+
+.pp-turn.pp-turn-active {
+  border-left-color: var(--pp-accent);
+  background: color-mix(in srgb, var(--pp-accent) 12%, transparent);
+}
+
+/* Mirrors whichever of Studio's own "Debug options" (gear icon next to
+   the pin/translate buttons — Variables, Flows and steps, Tool calls,
+   LLM Request, Topic citations, Sources, Transcript corrections, Turn
+   latency, Interruptions, Variants, Logs, Guardrails) are currently
+   checked on the source page — see collectTurnDebugSegments in
+   content.js. Deliberately understated relative to .pp-turn: this is
+   meta/debug info, not part of the conversation itself, and syncs live
+   with the source page's checkboxes with no PiP-side toggle of its own. */
+.pp-debug-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.pp-debug-chip {
+  font-size: 10px;
+  line-height: 1.3;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pp-text) 6%, transparent);
+  color: color-mix(in srgb, var(--pp-text) 45%, transparent);
+  /* Long chips (a big "Matched topics: …" list, a long log line) wrap
+     onto more lines and grow the chip taller instead of overflowing the
+     PiP's width — a flex item's default min-width is its content's
+     intrinsic (unwrapped) width, which would force this wider than the
+     row regardless of white-space, hence the explicit min-width: 0. */
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Flow milestones (Entered/Exited a flow, step transitions) — see
+   buildDebugStrip in content.js, which also always sorts these to the
+   front of a turn's debug strip. Solid brand-green text/border rather
+   than the plain muted .pp-debug-chip look: these mark where the
+   conversation actually moved, which is worth being able to scan for at
+   a glance, not read as just more debug noise alongside latency numbers
+   and tool-call timings. Declared after .pp-debug-chip so its
+   overrides win at equal specificity (both classes apply together). */
+.pp-debug-chip-flow {
+  font-weight: 700;
+  color: var(--pp-accent-text);
+  background: color-mix(in srgb, var(--pp-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pp-accent) 30%, transparent);
+}
+
+/* Studio's own "Logs" dropdown, mirrored — see buildLogsCard in
+   content.js. Given its own full-width row (rather than sitting inline
+   like a .pp-debug-chip) since it can expand into a multi-line list. */
+.pp-debug-logs {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pp-debug-logs-header {
+  align-self: flex-start;
+  max-width: 100%;
+  font-size: 10px;
+  font-family: inherit;
+  line-height: 1.4;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: none;
+  background: color-mix(in srgb, var(--pp-text) 6%, transparent);
+  color: color-mix(in srgb, var(--pp-text) 50%, transparent);
+  cursor: pointer;
+  /* A <button> doesn't wrap by default the way a plain span/div does —
+     a long log-entry name would otherwise push this row into a
+     horizontal scroll exactly like the chips above. */
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.pp-debug-logs-header:hover {
+  background: color-mix(in srgb, var(--pp-text) 10%, transparent);
+}
+
+.pp-debug-logs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--pp-text) 8%, transparent);
+  /* Logs entries are recursive (see buildLogsCard in content.js) — each
+     nested level reuses .pp-debug-logs, so indentation compounds
+     naturally with depth via this same rule at every level. */
+  min-width: 0;
+}
+
+/* A leaf log entry's own detail payload (confirmed live to always be a
+   JSON blob) — see buildLogsCardEntry's `bodyText` in content.js. Real
+   linebreaks preserved (`pre`), but still wraps rather than scrolling:
+   JSON often has long unbroken tokens (timestamps, ids) that word-break
+   alone wouldn't catch, hence overflow-wrap: anywhere on top of it. */
+.pp-debug-logs-body {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--pp-text) 40%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.pp-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: color-mix(in srgb, var(--pp-text) 50%, transparent);
+}
+
+.pp-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.pp-spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid color-mix(in srgb, var(--pp-text) 15%, transparent);
+  border-top-color: var(--pp-accent);
+  border-radius: 50%;
+  animation: pp-spin 0.8s linear infinite;
+}
+
+@keyframes pp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pp-audio-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--pp-text) 10%, transparent);
+}
+
+.pp-audio-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Shown while hasAudio but !audioReady — see scrapeConversation/
+   renderPipContent in content.js. Deliberately its own state rather than
+   showing the real controls with whatever data happens to exist yet. */
+.pp-audio-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pp-text) 50%, transparent);
+}
+
+.pp-audio-loading .pp-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+/* Fallback for the rare case waveform capture comes back empty — plain
+   position bar, same display-only caveat as the waveform below. */
+.pp-audio-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--pp-text) 12%, transparent);
+  overflow: hidden;
+}
+
+.pp-audio-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--pp-accent);
+  border-radius: 2px;
+  /* No CSS transition — see .pp-waveform-playhead for why. */
+}
+
+/* Real waveform pixels captured from Studio's own <canvas> (see
+   captureWaveformImages in content.js) — one row per speaker track.
+   Display-only, no click-to-seek: confirmed live, twice, that Studio's
+   playback position can't be driven externally (a synthetic click needs a
+   trusted event; writing the underlying <audio>.currentTime directly
+   doesn't move Studio's own UI either). The playhead is a pure position
+   indicator, not a control — see DESIGN_SPEC.md. */
+.pp-waveforms {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pp-waveform-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pp-waveform-label {
+  flex-shrink: 0;
+  width: 62px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--pp-text) 45%, transparent);
+}
+
+.pp-waveform-visual {
+  position: relative;
+  flex: 1;
+  height: 28px;
+}
+
+.pp-waveform-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Studio renders on a dark canvas background already, but normalize in
+     case a given capture comes through transparent. */
+  filter: brightness(1);
+}
+
+.pp-waveform-playhead {
+  position: absolute;
+  top: 0;
+  left: 0%;
+  width: 2px;
+  height: 100%;
+  background: var(--pp-accent);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--pp-accent) 70%, transparent);
+  /* No CSS transition — position is interpolated every animation frame in
+     JS (see wireAudioRemoteControl in content.js) so it tracks real
+     playback smoothly between the ~400ms position polls, rather than
+     visibly jumping/easing between infrequent updates. A lingering
+     transition here would fight that per-frame update and add lag. */
+  pointer-events: none;
+}
+
+.pp-audio-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: var(--pp-accent);
+  color: var(--pp-accent-ink);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.pp-audio-btn:hover {
+  filter: brightness(1.08);
+}
+
+.pp-audio-time {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--pp-text) 60%, transparent);
+  white-space: nowrap;
+}
+
+.pp-audio-hint {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--pp-text) 35%, transparent);
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

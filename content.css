@@ -1,0 +1,59 @@
+/* PolyPin — styles for the trigger button injected onto the Studio page
+   itself. Kept minimal and namespaced (`pp-`) to avoid colliding with
+   Studio's own styles or PolyTranslate's `pt-` prefixed elements. */
+
+/* The icon PNG is a self-contained badge (PolyAI-green circle + glyph
+   baked in, filling its own canvas edge-to-edge) — unlike PolyTranslate's
+   icon, which is a small transparent glyph relying on its *button* to draw
+   a CSS circle behind it. So here the button itself stays a plain,
+   unstyled hit target sized to match Studio's own icon buttons (28px,
+   e.g. .pt-translate-toggle), and the image fills it directly — no extra
+   CSS circle/background layered underneath, that would just double up
+   with the one already in the artwork. */
+.pp-pip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  flex-shrink: 0;
+}
+
+.pp-pip-btn:hover,
+.pp-pip-btn.pp-active {
+  filter: brightness(1.1);
+  transform: scale(1.05);
+}
+
+.pp-pip-btn img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Shown while isConversationReady is false (see content.js) — the audio
+   player mounts asynchronously after the transcript turns do, so clicking
+   too early used to open a PiP whose play button silently did nothing.
+   Greyed + pulsing signals "still loading," and btn.disabled (set
+   alongside this class) is what actually blocks the click. */
+.pp-pip-btn.pp-loading {
+  cursor: default;
+  filter: grayscale(1) brightness(0.75);
+  animation: pp-pulse 1.4s ease-in-out infinite;
+}
+
+.pp-pip-btn.pp-loading:hover {
+  filter: grayscale(1) brightness(0.75);
+  transform: none;
+}
+
+@keyframes pp-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.9; }
+}

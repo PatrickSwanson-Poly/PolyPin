@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "PolyPin",
+  "version": "0.1.0",
+  "author": "Patrick Swanson",
+  "description": "Pop a PolyAI Agent Studio conversation out into a floating, always-on-top window.",
+  "action": {},
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.poly.ai/*", "https://*.polyai.app/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*", "pip.css"],
+      "matches": ["https://*.poly.ai/*", "https://*.polyai.app/*"]
+    }
+  ]
+}

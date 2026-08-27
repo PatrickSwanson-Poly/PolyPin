@@ -1,0 +1,9 @@
+# Design/process docs — kept locally, not published
+DESIGN_SPEC.md
+CLAUDE.md
+
+# Claude Code project files
+.claude/
+
+# macOS
+.DS_Store
