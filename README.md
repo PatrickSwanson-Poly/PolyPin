@@ -6,7 +6,13 @@ A Chrome extension that pops a PolyAI Agent Studio conversation's transcript and
 
 ### Pop Out Any Conversation
 
-A small pin button appears in the conversation header's icon cluster (next to Notes, PolyTranslate, etc.) — or in the notes toolbar when viewing a call from the drawer/sidebar. It greys out and pulses while the call is still loading, and turns solid once ready to click.
+A small pin button appears in the conversation header's icon cluster (next to Notes, PolyTranslate, etc.) — or in the notes toolbar when viewing a call from the drawer/sidebar.
+
+> <p align="center">
+>   <img src="screenshots/trigger_button_location.png" alt="Where the trigger button appears in the conversation header">
+> </p>
+
+It greys out and pulses while the call is still loading, and turns solid once ready to click.
 
 > <p align="center">
 >   <img src="screenshots/trigger_button.png" alt="Trigger button, ready and loading states">
